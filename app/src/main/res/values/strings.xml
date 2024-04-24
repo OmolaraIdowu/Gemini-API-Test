@@ -1,0 +1,16 @@
+<resources>
+    <string name="app_name">Gemini API Test</string>
+<!--
+    <string name="prompt_placeholder">Please assess whether the given image depicts human teeth. Indicate if the image is clear, if it shows human teeth, provide a reason for your assessment, estimate the likelihood of it being a teeth image on a scale from 0 to 10, and state if there are any visible signs of decay or cavities.</string>
+-->
+    <string name="scan">Scan</string>
+    <string name="prompt_placeholder">Please assess whether the provided image depicts human teeth.
+        Evaluate image clarity, presence of teeth, signs of decay or cavities, and overall relevance to dental assessment.
+        Estimate the likelihood of it being a teeth image on a scale from 0 to 10.
+        If the image does not meet criteria or does not depict human teeth, explain what it portrays, why and provide a detailed explanation and guide the user on how to upload a suitable image for dental analysis.</string>
+    <string name="retake_scan">Retake Scan</string>
+    <string name="done">Done</string>
+    <string name="loading">Loading...</string>
+    <string name="scan_result">Result here</string>
+
+</resources>
