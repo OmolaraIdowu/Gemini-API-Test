@@ -1,6 +1,9 @@
 package com.swancodes.geminiapitest
 
 import android.content.Intent
+import android.graphics.Bitmap
+import android.graphics.Matrix
+import android.media.ExifInterface
 import android.os.Bundle
 import android.provider.MediaStore
 import android.widget.Toast
@@ -12,6 +15,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.lifecycleScope
 import com.swancodes.geminiapitest.databinding.ActivityMainBinding
 import kotlinx.coroutines.launch
+import java.io.IOException
 
 class MainActivity : AppCompatActivity() {
 
@@ -94,12 +98,27 @@ class MainActivity : AppCompatActivity() {
 
         if (requestCode == REQUEST_CODE_SELECT_IMAGE && resultCode == RESULT_OK) {
             data?.data?.let { uri ->
-                val bitmap = MediaStore.Images.Media.getBitmap(this.contentResolver, uri)
-                viewModel.sendPrompt(bitmap, getString(R.string.prompt_placeholder))
-                binding.selectedImage.setImageBitmap(bitmap)
-                binding.imageButton.gone()
-                binding.retakeScanButton.gone()
-                binding.doneButton.gone()
+                try {
+                    val inputStream = contentResolver.openInputStream(uri)
+                    val exif = ExifInterface(inputStream!!)
+                    val orientation = exif.getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL)
+                    val rotationDegrees = when (orientation) {
+                        ExifInterface.ORIENTATION_ROTATE_90 -> 90
+                        ExifInterface.ORIENTATION_ROTATE_180 -> 180
+                        ExifInterface.ORIENTATION_ROTATE_270 -> 270
+                        else -> 0
+                    }
+                    val bitmap = MediaStore.Images.Media.getBitmap(this.contentResolver, uri)
+                    val rotatedBitmap = rotateBitmap(bitmap, rotationDegrees)
+                    viewModel.sendPrompt(rotatedBitmap, getString(R.string.prompt_placeholder))
+                    binding.selectedImage.setImageBitmap(rotatedBitmap)
+                    binding.imageButton.gone()
+                    binding.retakeScanButton.gone()
+                    binding.doneButton.gone()
+                } catch (e: IOException) {
+                    e.printStackTrace()
+                    Toast.makeText(this, "Error loading image. Please try again.", Toast.LENGTH_SHORT).show()
+                }
             }
         }
     }
@@ -114,4 +133,8 @@ class MainActivity : AppCompatActivity() {
         startActivityForResult(intent, REQUEST_CODE_SELECT_IMAGE)
     }
 
+    private fun rotateBitmap(bitmap: Bitmap, degrees: Int): Bitmap {
+        val matrix = Matrix().apply { postRotate(degrees.toFloat()) }
+        return Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
+    }
 }
