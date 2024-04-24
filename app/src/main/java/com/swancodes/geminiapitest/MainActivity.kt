@@ -58,7 +58,6 @@ class MainActivity : AppCompatActivity() {
         when (state) {
             is UiState.Initial -> {
                 progressBar.gone()
-                scanButton.text = getString(R.string.scan)
                 doneButton.gone()
                 retakeScanButton.gone()
             }
@@ -81,12 +80,11 @@ class MainActivity : AppCompatActivity() {
 
             is UiState.Error -> {
                 progressBar.gone()
-                scanButton.text = getString(R.string.scan)
-                Toast.makeText(this@MainActivity, state.errorMessage, Toast.LENGTH_SHORT).show()
                 scanResultTextView.text = state.errorMessage
                 scanButton.gone()
                 retakeScanButton.show()
                 doneButton.show()
+                Toast.makeText(this@MainActivity, state.errorMessage, Toast.LENGTH_SHORT).show()
 
             }
         }
