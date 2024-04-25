@@ -1,26 +1,41 @@
 package com.swancodes.geminiapitest
 
-import android.content.Intent
-import android.graphics.Bitmap
-import android.graphics.Matrix
-import android.media.ExifInterface
+import android.Manifest
+import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Bundle
-import android.provider.MediaStore
+import android.os.Environment
+import android.util.Log
 import android.widget.Toast
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.viewModels
 import androidx.appcompat.app.AppCompatActivity
+import androidx.camera.core.CameraSelector
+import androidx.camera.core.ImageCapture
+import androidx.camera.core.ImageCaptureException
+import androidx.camera.core.Preview
+import androidx.camera.lifecycle.ProcessCameraProvider
+import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
-import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.lifecycleScope
 import com.swancodes.geminiapitest.databinding.ActivityMainBinding
 import kotlinx.coroutines.launch
-import java.io.IOException
+import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Locale
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
 
 class MainActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityMainBinding
-    private lateinit var viewModel: MainViewModel
+    private var imageCapture: ImageCapture? = null
+    private lateinit var cameraExecutor: ExecutorService
+    private val viewModel: MainViewModel by viewModels {
+        MainViewModelFactory(application)
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -32,107 +47,214 @@ class MainActivity : AppCompatActivity() {
             v.setPadding(systemBars.left, systemBars.top, systemBars.right, systemBars.bottom)
             insets
         }
-        viewModel = ViewModelProvider(this)[MainViewModel::class.java]
 
-        binding.apply {
+        // Request camera permissions
+        if (allPermissionsGranted()) {
+            startCamera()
+        } else {
+            requestPermissions()
+        }
 
-            imageButton.setOnClickListener {
-                openGalleryForImageSelection()
+        cameraExecutor = Executors.newSingleThreadExecutor()
+
+        lifecycleScope.launch {
+            viewModel.uiState.collect { state ->
+                updateUI(state)
             }
+        }
 
-            scanButton.setOnClickListener {
-                lifecycleScope.launch {
-                    viewModel.uiState.collect { updateUI(it) }
-                }
+        setupUI()
+    }
+
+    private fun setupUI() {
+        binding.apply {
+            binding.scanButton.setOnClickListener {
+                takePhotoAndScan()
             }
             retakeScanButton.setOnClickListener {
-                openGalleryForImageSelection()
+                startCamera()
+                viewModel.onRetakeScan()
             }
             doneButton.setOnClickListener {
                 finish()
             }
         }
+
+    }
+
+    private fun startCamera() {
+        val cameraProviderFuture = ProcessCameraProvider.getInstance(this)
+
+        cameraProviderFuture.addListener({
+            // Used to bind the lifecycle of cameras to the lifecycle owner
+            val cameraProvider: ProcessCameraProvider = cameraProviderFuture.get()
+
+            // Preview
+            val preview = Preview.Builder()
+                .build()
+                .also {
+                    it.setSurfaceProvider(binding.previewView.surfaceProvider)
+                }
+
+            imageCapture = ImageCapture.Builder().build()
+
+            // Select back camera as a default
+            val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
+
+            try {
+                // Unbind use cases before rebinding
+                cameraProvider.unbindAll()
+
+                // Bind use cases to camera
+                cameraProvider.bindToLifecycle(
+                    this, cameraSelector, preview, imageCapture
+                )
+
+            } catch (exc: Exception) {
+                Log.e(TAG, "Use case binding failed", exc)
+            }
+
+        }, ContextCompat.getMainExecutor(this))
     }
 
     private fun updateUI(state: UiState) = with(binding) {
         when (state) {
             is UiState.Initial -> {
+                scanResultTextView.text = getString(R.string.scan_result)
+                previewView.show()
+                scanButton.show()
                 progressBar.gone()
                 doneButton.gone()
+                capturedImageView.gone()
                 retakeScanButton.gone()
+            }
+
+            is UiState.Captured -> {
+                capturedImageView.setImageURI(state.capturedImage)
+                scanResultTextView.text = getString(R.string.processing)
+                previewView.gone()
+                progressBar.gone()
+                scanButton.gone()
+                retakeScanButton.show()
+                doneButton.show()
+                capturedImageView.show()
             }
 
             is UiState.Loading -> {
+                scanResultTextView.text = getString(R.string.processing)
                 progressBar.show()
                 scanButton.gone()
-                scanResultTextView.text = getString(R.string.loading)
                 retakeScanButton.gone()
                 doneButton.gone()
             }
 
+
             is UiState.Success -> {
-                progressBar.gone()
                 scanResultTextView.text = state.outputText
-                scanButton.gone()
                 retakeScanButton.show()
                 doneButton.show()
+                capturedImageView.show()
+                progressBar.gone()
+                scanButton.gone()
             }
 
             is UiState.Error -> {
-                progressBar.gone()
                 scanResultTextView.text = state.errorMessage
-                scanButton.gone()
                 retakeScanButton.show()
                 doneButton.show()
+                progressBar.gone()
+                scanButton.gone()
                 Toast.makeText(this@MainActivity, state.errorMessage, Toast.LENGTH_SHORT).show()
 
             }
         }
     }
 
-    @Deprecated("Deprecated in Java")
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        super.onActivityResult(requestCode, resultCode, data)
+    companion object {
+        private const val TAG = "YOOOOOOO"
+        const val FILENAME_FORMAT = "yyyy-MM-dd-HH-mm-ss-SSS"
+        private val REQUIRED_PERMISSIONS =
+            arrayOf(
+                Manifest.permission.CAMERA,
+            )
+        //private const val REQUEST_CODE_PERMISSIONS = 10
+    }
 
-        if (requestCode == REQUEST_CODE_SELECT_IMAGE && resultCode == RESULT_OK) {
-            data?.data?.let { uri ->
-                try {
-                    val inputStream = contentResolver.openInputStream(uri)
-                    val exif = ExifInterface(inputStream!!)
-                    val orientation = exif.getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL)
-                    val rotationDegrees = when (orientation) {
-                        ExifInterface.ORIENTATION_ROTATE_90 -> 90
-                        ExifInterface.ORIENTATION_ROTATE_180 -> 180
-                        ExifInterface.ORIENTATION_ROTATE_270 -> 270
-                        else -> 0
-                    }
-                    val bitmap = MediaStore.Images.Media.getBitmap(this.contentResolver, uri)
-                    val rotatedBitmap = rotateBitmap(bitmap, rotationDegrees)
-                    viewModel.sendPrompt(rotatedBitmap, getString(R.string.prompt_placeholder))
-                    binding.selectedImage.setImageBitmap(rotatedBitmap)
-                    binding.imageButton.gone()
-                    binding.retakeScanButton.gone()
-                    binding.doneButton.gone()
-                } catch (e: IOException) {
-                    e.printStackTrace()
-                    Toast.makeText(this, "Error loading image. Please try again.", Toast.LENGTH_SHORT).show()
+    private fun takePhotoAndScan() {
+        // Get a stable reference of the modifiable image capture use case
+        val imageCapture = imageCapture ?: return
+
+        // Create output file to hold the image
+        val name = SimpleDateFormat(FILENAME_FORMAT, Locale.US)
+            .format(System.currentTimeMillis())
+        val photoFile = File(application.filesDir, "$name.jpg")
+
+        // Create output options object which contains file + metadata
+        val outputOptions = ImageCapture.OutputFileOptions
+            .Builder(photoFile)
+            .build()
+
+        // Set up image capture listener, which is triggered after photo has
+        // been taken
+        imageCapture.takePicture(
+            outputOptions,
+            ContextCompat.getMainExecutor(this),
+            object : ImageCapture.OnImageSavedCallback {
+                override fun onError(exc: ImageCaptureException) {
+                    Log.e(TAG, "Photo capture failed: ${exc.message}", exc)
+                }
+
+                override fun onImageSaved(output: ImageCapture.OutputFileResults) {
+                    val savedUri = output.savedUri ?: Uri.fromFile(photoFile)
+                    val imagePath = savedUri.path ?: ""
+                    viewModel.onImageTaken(imagePath, getString(R.string.prompt_placeholder))
+                    //val msg = "Photo capture succeeded: ${output.savedUri}"
+                    val msg = "Photo taken successfully"
+                    Toast.makeText(baseContext, msg, Toast.LENGTH_SHORT).show()
+                    Log.e(TAG, "Photo capture succeeded: $savedUri")
+
+                    // Update UI to show captured image
+                    binding.capturedImageView.setImageURI(savedUri)
+                    binding.scanResultTextView.text = getString(R.string.processing)
                 }
             }
+        )
+    }
+
+    private fun requestPermissions() {
+        activityResultLauncher.launch(REQUIRED_PERMISSIONS)
+    }
+
+    private fun allPermissionsGranted() = REQUIRED_PERMISSIONS.all {
+        ContextCompat.checkSelfPermission(
+            baseContext, it
+        ) == PackageManager.PERMISSION_GRANTED
+    }
+
+    private val activityResultLauncher =
+        registerForActivityResult(
+            ActivityResultContracts.RequestMultiplePermissions()
+        )
+        { permissions ->
+            // Handle Permission granted/rejected
+            var permissionGranted = true
+            permissions.entries.forEach {
+                if (it.key in REQUIRED_PERMISSIONS && !it.value)
+                    permissionGranted = false
+            }
+            if (!permissionGranted) {
+                Toast.makeText(
+                    baseContext,
+                    "Permission request denied",
+                    Toast.LENGTH_SHORT
+                ).show()
+            } else {
+                startCamera()
+            }
         }
-    }
 
-    companion object {
-        private const val REQUEST_CODE_SELECT_IMAGE = 100
-    }
-
-    private fun openGalleryForImageSelection() {
-        val intent = Intent(Intent.ACTION_PICK)
-        intent.type = "image/*"
-        startActivityForResult(intent, REQUEST_CODE_SELECT_IMAGE)
-    }
-
-    private fun rotateBitmap(bitmap: Bitmap, degrees: Int): Bitmap {
-        val matrix = Matrix().apply { postRotate(degrees.toFloat()) }
-        return Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
+    override fun onDestroy() {
+        super.onDestroy()
+        cameraExecutor.shutdown()
     }
 }
