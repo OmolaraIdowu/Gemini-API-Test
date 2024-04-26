@@ -1,66 +1,44 @@
 package com.swancodes.geminiapitest
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
+import android.graphics.Matrix
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
-import android.os.Environment
-import android.util.Log
+import android.provider.MediaStore
+import android.provider.Settings
 import android.widget.Toast
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
-import androidx.camera.core.CameraSelector
-import androidx.camera.core.ImageCapture
-import androidx.camera.core.ImageCaptureException
-import androidx.camera.core.Preview
-import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
+import androidx.exifinterface.media.ExifInterface
 import androidx.lifecycle.lifecycleScope
 import com.swancodes.geminiapitest.databinding.ActivityMainBinding
 import kotlinx.coroutines.launch
-import java.io.File
-import java.text.SimpleDateFormat
-import java.util.Locale
-import java.util.concurrent.ExecutorService
-import java.util.concurrent.Executors
+import java.io.IOException
 
 class MainActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityMainBinding
-    private var imageCapture: ImageCapture? = null
-    private lateinit var cameraExecutor: ExecutorService
-    private val viewModel: MainViewModel by viewModels {
-        MainViewModelFactory(application)
-    }
+    private val viewModel: MainViewModel by viewModels()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
-        ViewCompat.setOnApplyWindowInsetsListener(findViewById(R.id.main)) { v, insets ->
+        ViewCompat.setOnApplyWindowInsetsListener(binding.main) { v, insets ->
             val systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
             v.setPadding(systemBars.left, systemBars.top, systemBars.right, systemBars.bottom)
             insets
-        }
-
-        // Request camera permissions
-        if (allPermissionsGranted()) {
-            startCamera()
-        } else {
-            requestPermissions()
-        }
-
-        cameraExecutor = Executors.newSingleThreadExecutor()
-
-        lifecycleScope.launch {
-            viewModel.uiState.collect { state ->
-                updateUI(state)
-            }
         }
 
         setupUI()
@@ -68,92 +46,51 @@ class MainActivity : AppCompatActivity() {
 
     private fun setupUI() {
         binding.apply {
-            binding.scanButton.setOnClickListener {
-                takePhotoAndScan()
+            scanButton.isEnabled = false
+            scanButton.setOnClickListener {
+                lifecycleScope.launch {
+                    viewModel.uiState.collect { state ->
+                        updateUI(state)
+                    }
+                }
             }
             retakeScanButton.setOnClickListener {
-                startCamera()
                 viewModel.onRetakeScan()
             }
             doneButton.setOnClickListener {
                 finish()
             }
-        }
-
-    }
-
-    private fun startCamera() {
-        val cameraProviderFuture = ProcessCameraProvider.getInstance(this)
-
-        cameraProviderFuture.addListener({
-            // Used to bind the lifecycle of cameras to the lifecycle owner
-            val cameraProvider: ProcessCameraProvider = cameraProviderFuture.get()
-
-            // Preview
-            val preview = Preview.Builder()
-                .build()
-                .also {
-                    it.setSurfaceProvider(binding.previewView.surfaceProvider)
-                }
-
-            imageCapture = ImageCapture.Builder().build()
-
-            // Select back camera as a default
-            val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
-
-            try {
-                // Unbind use cases before rebinding
-                cameraProvider.unbindAll()
-
-                // Bind use cases to camera
-                cameraProvider.bindToLifecycle(
-                    this, cameraSelector, preview, imageCapture
-                )
-
-            } catch (exc: Exception) {
-                Log.e(TAG, "Use case binding failed", exc)
+            imageButton.setOnClickListener {
+                showImageSelectionDialog()
             }
-
-        }, ContextCompat.getMainExecutor(this))
+        }
     }
 
     private fun updateUI(state: UiState) = with(binding) {
         when (state) {
             is UiState.Initial -> {
                 scanResultTextView.text = getString(R.string.scan_result)
-                previewView.show()
-                scanButton.show()
                 progressBar.gone()
                 doneButton.gone()
-                capturedImageView.gone()
+                scanButton.show()
                 retakeScanButton.gone()
-            }
-
-            is UiState.Captured -> {
-                capturedImageView.setImageURI(state.capturedImage)
-                scanResultTextView.text = getString(R.string.processing)
-                previewView.gone()
-                progressBar.gone()
-                scanButton.gone()
-                retakeScanButton.show()
-                doneButton.show()
-                capturedImageView.show()
+                imageButton.show()
+                binding.selectedImage.setImageDrawable(null)
+                binding.scanButton.isEnabled = false
             }
 
             is UiState.Loading -> {
-                scanResultTextView.text = getString(R.string.processing)
+                scanResultTextView.text = getString(R.string.analyzing)
                 progressBar.show()
                 scanButton.gone()
                 retakeScanButton.gone()
                 doneButton.gone()
             }
 
-
             is UiState.Success -> {
                 scanResultTextView.text = state.outputText
                 retakeScanButton.show()
                 doneButton.show()
-                capturedImageView.show()
                 progressBar.gone()
                 scanButton.gone()
             }
@@ -165,70 +102,8 @@ class MainActivity : AppCompatActivity() {
                 progressBar.gone()
                 scanButton.gone()
                 Toast.makeText(this@MainActivity, state.errorMessage, Toast.LENGTH_SHORT).show()
-
             }
         }
-    }
-
-    companion object {
-        private const val TAG = "YOOOOOOO"
-        const val FILENAME_FORMAT = "yyyy-MM-dd-HH-mm-ss-SSS"
-        private val REQUIRED_PERMISSIONS =
-            arrayOf(
-                Manifest.permission.CAMERA,
-            )
-        //private const val REQUEST_CODE_PERMISSIONS = 10
-    }
-
-    private fun takePhotoAndScan() {
-        // Get a stable reference of the modifiable image capture use case
-        val imageCapture = imageCapture ?: return
-
-        // Create output file to hold the image
-        val name = SimpleDateFormat(FILENAME_FORMAT, Locale.US)
-            .format(System.currentTimeMillis())
-        val photoFile = File(application.filesDir, "$name.jpg")
-
-        // Create output options object which contains file + metadata
-        val outputOptions = ImageCapture.OutputFileOptions
-            .Builder(photoFile)
-            .build()
-
-        // Set up image capture listener, which is triggered after photo has
-        // been taken
-        imageCapture.takePicture(
-            outputOptions,
-            ContextCompat.getMainExecutor(this),
-            object : ImageCapture.OnImageSavedCallback {
-                override fun onError(exc: ImageCaptureException) {
-                    Log.e(TAG, "Photo capture failed: ${exc.message}", exc)
-                }
-
-                override fun onImageSaved(output: ImageCapture.OutputFileResults) {
-                    val savedUri = output.savedUri ?: Uri.fromFile(photoFile)
-                    val imagePath = savedUri.path ?: ""
-                    viewModel.onImageTaken(imagePath, getString(R.string.prompt_placeholder))
-                    //val msg = "Photo capture succeeded: ${output.savedUri}"
-                    val msg = "Photo taken successfully"
-                    Toast.makeText(baseContext, msg, Toast.LENGTH_SHORT).show()
-                    Log.e(TAG, "Photo capture succeeded: $savedUri")
-
-                    // Update UI to show captured image
-                    binding.capturedImageView.setImageURI(savedUri)
-                    binding.scanResultTextView.text = getString(R.string.processing)
-                }
-            }
-        )
-    }
-
-    private fun requestPermissions() {
-        activityResultLauncher.launch(REQUIRED_PERMISSIONS)
-    }
-
-    private fun allPermissionsGranted() = REQUIRED_PERMISSIONS.all {
-        ContextCompat.checkSelfPermission(
-            baseContext, it
-        ) == PackageManager.PERMISSION_GRANTED
     }
 
     private val activityResultLauncher =
@@ -243,18 +118,149 @@ class MainActivity : AppCompatActivity() {
                     permissionGranted = false
             }
             if (!permissionGranted) {
-                Toast.makeText(
-                    baseContext,
-                    "Permission request denied",
-                    Toast.LENGTH_SHORT
-                ).show()
+                Toast.makeText(baseContext, "Permission request denied", Toast.LENGTH_SHORT).show()
+                showPermissionDeniedDialog()
             } else {
-                startCamera()
+                // Permission granted, open the camera
+                openCamera()
             }
         }
 
-    override fun onDestroy() {
-        super.onDestroy()
-        cameraExecutor.shutdown()
+    private fun requestPermissions() {
+        activityResultLauncher.launch(REQUIRED_PERMISSIONS)
+    }
+
+    private fun allPermissionsGranted() = REQUIRED_PERMISSIONS.all {
+        ContextCompat.checkSelfPermission(
+            baseContext, it
+        ) == PackageManager.PERMISSION_GRANTED
+    }
+
+    private fun openCamera() {
+        val intent = Intent(MediaStore.ACTION_IMAGE_CAPTURE)
+        try {
+            startActivityForResult(intent, REQUEST_CODE_IMAGE_CAPTURE)
+        } catch (e: IOException) {
+            // display error message to the user
+            Toast.makeText(this, "Camera not available", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun openGalleryForImageSelection() {
+        val intent = Intent(Intent.ACTION_PICK)
+        intent.type = "image/*"
+        startActivityForResult(intent, REQUEST_CODE_SELECT_IMAGE)
+    }
+
+    private fun showImageSelectionDialog() {
+        val options = arrayOf("Take Photo", "Choose from Gallery")
+        val builder = AlertDialog.Builder(this@MainActivity)
+        builder.setTitle("Choose an option")
+        builder.setItems(options) { _, which ->
+            when (which) {
+                0 -> {
+                    // Request camera permissions
+                    if (allPermissionsGranted()) {
+                        openCamera()
+                    } else {
+                        requestPermissions()
+                    }
+                }
+
+                1 -> openGalleryForImageSelection()
+            }
+        }
+        builder.show()
+    }
+
+    private fun showPermissionDeniedDialog() {
+        AlertDialog.Builder(this)
+            .setTitle("Permission Required")
+            .setMessage("This app requires camera permission to take photos. Please grant the permission in settings.")
+            .setPositiveButton("Go to Settings") { dialog, _ ->
+                // Redirect the user to app settings to grant permission
+                val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
+                intent.data = Uri.fromParts("package", packageName, null)
+                startActivity(intent)
+                dialog.dismiss()
+            }
+            .setNegativeButton("Cancel") { dialog, _ ->
+                dialog.dismiss()
+            }
+            .show()
+    }
+
+    @Deprecated("Deprecated in Java")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == REQUEST_CODE_SELECT_IMAGE && resultCode == RESULT_OK) {
+            data?.data?.let { uri ->
+                handleSelectedImage(uri)
+            }
+        } else if (requestCode == REQUEST_CODE_IMAGE_CAPTURE && resultCode == RESULT_OK) {
+            val imageBitmap = data?.extras?.get("data") as Bitmap
+            handleCapturedImage(imageBitmap)
+        }
+    }
+
+    // Handle selected image from gallery
+    private fun handleSelectedImage(uri: Uri) {
+        try {
+            val inputStream = contentResolver.openInputStream(uri)
+            val exif = ExifInterface(inputStream!!)
+            val orientation = exif.getAttributeInt(
+                ExifInterface.TAG_ORIENTATION,
+                ExifInterface.ORIENTATION_NORMAL
+            )
+            val rotationDegrees = when (orientation) {
+                ExifInterface.ORIENTATION_ROTATE_90 -> 90
+                ExifInterface.ORIENTATION_ROTATE_180 -> 180
+                ExifInterface.ORIENTATION_ROTATE_270 -> 270
+                else -> 0
+            }
+            val bitmap = MediaStore.Images.Media.getBitmap(this.contentResolver, uri)
+            val rotatedBitmap = rotateBitmap(bitmap, rotationDegrees)
+            viewModel.sendPrompt(rotatedBitmap, getString(R.string.prompt_placeholder))
+            binding.selectedImage.setImageBitmap(rotatedBitmap)
+            binding.scanButton.isEnabled = true
+            binding.imageButton.gone()
+            binding.retakeScanButton.gone()
+            binding.doneButton.gone()
+        } catch (e: IOException) {
+            e.printStackTrace()
+            Toast.makeText(
+                this,
+                "Error loading image. Please try again.",
+                Toast.LENGTH_SHORT
+            ).show()
+        }
+    }
+
+    // Handle captured image from camera
+    private fun handleCapturedImage(imageBitmap: Bitmap) {
+        viewModel.sendPrompt(imageBitmap, getString(R.string.prompt_placeholder))
+        binding.selectedImage.setImageBitmap(imageBitmap)
+        binding.scanButton.isEnabled = true
+        binding.imageButton.gone()
+        binding.retakeScanButton.gone()
+        binding.doneButton.gone()
+    }
+
+    private fun rotateBitmap(bitmap: Bitmap, degrees: Int): Bitmap {
+        val matrix = Matrix().apply { postRotate(degrees.toFloat()) }
+        return Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
+    }
+
+    companion object {
+        private val REQUIRED_PERMISSIONS =
+            mutableListOf(
+                Manifest.permission.CAMERA,
+            ).apply {
+                if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.P) {
+                    add(Manifest.permission.READ_EXTERNAL_STORAGE)
+                }
+            }.toTypedArray()
+        private const val REQUEST_CODE_SELECT_IMAGE = 100
+        private const val REQUEST_CODE_IMAGE_CAPTURE = 200
     }
 }

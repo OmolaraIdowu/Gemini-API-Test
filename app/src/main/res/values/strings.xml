@@ -5,15 +5,14 @@
 -->
     <string name="scan">Scan</string>
     <string name="prompt_placeholder">
-        Please assess the provided image for dental analysis, considering the following factors: image clarity, presence of teeth, signs of decay or cavities, and overall relevance to dental assessment.
-        Estimate the likelihood of it being a teeth image on a scale from 0 to 10.
-        Before proceeding, ensure the image does not contain inappropriate content such as nudity, violence, or personal information.
-        If it does, please inform the user that the image is unsuitable for dental assessment.
-        If the image passes the safety check, evaluate its suitability for analysis.
-        Assess the presence and clarity of teeth, signs of decay or other issues, gum health, and any dental work visible.
-        Provide guidance on uploading a clear, well-lit image with proper orientation if necessary.
-        If the image does not meet the criteria or does not depict human teeth, explain why and guide the user on capturing a suitable image for dental analysis,
-        such as a high-resolution close-up photo of the teeth.</string>
+        Analyze the provided image for dental assessment. Check for:
+        1. Image clarity
+        2. Presence of teeth
+        3. Signs of decay/cavities
+        4. Relevance to dental assessment
+        If the image depict human teeth, ensure the image is safe and suitable for analysis.
+        If the image does not meet criteria or does not depict human teeth, explain what it portrays,
+        and provide a detailed explanation and guide the user on how to capture a suitable image for dental analysis.</string>
 
     <!--<string name="prompt_placeholder">Please assess whether the provided image depicts human teeth.
         Evaluate image clarity, presence of teeth, signs of decay or cavities, and overall relevance to dental assessment.
@@ -22,9 +21,11 @@
         why and provide a detailed explanation and guide the user on how to upload a suitable image for dental analysis.</string>-->
     <string name="retake_scan">Retake Scan</string>
     <string name="done">Done</string>
-    <string name="processing">Image captured. Processing image....</string>
+    <string name="analyzing">Analyzing Image....</string>
     <string name="scan_result">Scan result will be displayed here.</string>
     <string name="teeth_image">Teeth Image</string>
-    <string name="instructions_text">Place your teeth within the frame and tap the scan button</string>
+    <string name="instructions_text">Tap the camera icon to begin</string>
     <string name="captured_image">Captured Image</string>
+    <string name="add_image_button">Add Image Button</string>
+    <string name="selected_image">Selected Image</string>
 </resources>
